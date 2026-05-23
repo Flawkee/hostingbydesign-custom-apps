@@ -99,9 +99,9 @@ function _deps() {
     if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null || command -v google-chrome &>/dev/null; then
         echo "Chromium/Chrome found."
     else
-        echo "Chromium not found — installing chromium-browser..."
-        apt-get install -y chromium-browser >> "$log" 2>&1 || {
-            echo "Failed to install chromium-browser. Install it manually and re-run."
+        echo "Chromium not found — installing chromium..."
+        apt-get install -y chromium >> "$log" 2>&1 || {
+            echo "Failed to install chromium. Install it manually and re-run."
             exit 1
         }
         echo "Chromium installed."
