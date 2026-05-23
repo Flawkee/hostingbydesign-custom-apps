@@ -67,21 +67,6 @@ _check_linger() {
     echo "Linger enabled for $target_user."
 }
 
-# --- Architecture check ------------------------------------------------------
-_check_arch() {
-    local machine
-    machine="$(uname -m)"
-    case "$machine" in
-        x86_64)  echo "linux_x64" ;;
-        aarch64|arm64) echo "linux_arm64" ;;
-        *)
-            echo "Unsupported architecture: $machine"
-            echo "FlareSolverr only provides pre-built binaries for x86_64 and arm64."
-            exit 1
-            ;;
-    esac
-}
-
 # --- Pick a free port --------------------------------------------------------
 _port() {
     local low=$1 high=$2
@@ -114,18 +99,35 @@ function _deps() {
     if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null || command -v google-chrome &>/dev/null; then
         echo "Chromium/Chrome found."
     else
-        echo "Chromium not found — installing chromium..."
-        apt-get install -y chromium >> "$log" 2>&1 || {
-            echo "Failed to install chromium. Install it manually and re-run."
+        echo "Chromium not found — installing chromium-browser..."
+        apt-get install -y chromium-browser >> "$log" 2>&1 || {
+            echo "Failed to install chromium-browser. Install it manually and re-run."
             exit 1
         }
         echo "Chromium installed."
     fi
 
-    # Ensure curl and jq are available for the download step.
+    # FlareSolverr source requires Python 3.13. Check for it; install from
+    # deadsnakes PPA if missing (works on Ubuntu 20.04, 22.04, etc.)
+    if ! command -v python3.13 &>/dev/null; then
+        echo "Python 3.13 not found — installing from deadsnakes PPA..."
+        apt-get install -y software-properties-common >> "$log" 2>&1
+        add-apt-repository -y ppa:deadsnakes/ppa >> "$log" 2>&1
+        apt-get update >> "$log" 2>&1
+        apt-get install -y python3.13 python3.13-venv python3.13-distutils >> "$log" 2>&1 || {
+            echo "Failed to install Python 3.13. Check $log"
+            exit 1
+        }
+        echo "Python 3.13 installed."
+    else
+        echo "Python 3.13 found."
+    fi
+
+    # Ensure curl, jq, and git are available.
     local missing=()
     command -v curl &>/dev/null || missing+=(curl)
     command -v jq   &>/dev/null || missing+=(jq)
+    command -v git  &>/dev/null || missing+=(git)
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Installing: ${missing[*]}"
         apt-get install -y "${missing[@]}" >> "$log" 2>&1 || {
@@ -137,38 +139,39 @@ function _deps() {
 }
 
 function _flaresolverr_install() {
-    local arch
-    arch="$(_check_arch)"
-    echo "Architecture detected: $arch"
+    echo "Fetching latest FlareSolverr release tag..."
+    local latest_tag
+    latest_tag="$(curl -sS https://api.github.com/repos/FlareSolverr/FlareSolverr/releases/latest \
+        | jq -r '.tag_name')"
 
-    echo "Fetching latest FlareSolverr release..."
-    local dlurl
-    dlurl="$(curl -sS https://api.github.com/repos/FlareSolverr/FlareSolverr/releases/latest \
-        | jq -r ".assets[] | select(.name == \"flaresolverr_${arch}.tar.gz\") | .browser_download_url")"
-
-    if [[ -z "$dlurl" ]]; then
-        echo "Could not find a release asset for arch '$arch'."
-        echo "Check https://github.com/FlareSolverr/FlareSolverr/releases"
+    if [[ -z "$latest_tag" || "$latest_tag" == "null" ]]; then
+        echo "Could not determine latest release tag. Check $log"
         exit 1
     fi
+    echo "Installing FlareSolverr $latest_tag from source (avoids GLIBC compatibility issues)"
 
-    echo "Downloading $dlurl"
-    run_as_user "wget '$dlurl' -q -O '$target_home/flaresolverr.tar.gz'" >> "$log" 2>&1 || {
-        echo "Download failed. See $log"
+    run_as_user "git clone --depth=1 --branch '$latest_tag' \
+        https://github.com/FlareSolverr/FlareSolverr.git '$target_home/flaresolverr'" >> "$log" 2>&1 || {
+        echo "Clone failed. See $log"
         exit 1
     }
 
-    echo "Extracting..."
-    run_as_user "mkdir -p '$target_home/flaresolverr' && \
-        tar --strip-components=1 -C '$target_home/flaresolverr' \
-            -xzf '$target_home/flaresolverr.tar.gz' && \
-        rm '$target_home/flaresolverr.tar.gz'" >> "$log" 2>&1 || {
-        echo "Extraction failed. See $log"
+    echo "Creating Python 3.13 virtual environment..."
+    run_as_user "python3.13 -m venv '$target_home/flaresolverr/venv'" >> "$log" 2>&1 || {
+        echo "Failed to create venv. See $log"
         exit 1
     }
 
-    run_as_user "chmod +x '$target_home/flaresolverr/flaresolverr'"
-    echo "FlareSolverr extracted to $target_home/flaresolverr/"
+    echo "Installing Python dependencies (this might take a while)..."
+    run_as_user "'$target_home/flaresolverr/venv/bin/pip' install \
+        --upgrade pip -q >> '$log' 2>&1 && \
+        '$target_home/flaresolverr/venv/bin/pip' install \
+        -r '$target_home/flaresolverr/requirements.txt' -q" >> "$log" 2>&1 || {
+        echo "Failed to install Python dependencies. See $log"
+        exit 1
+    }
+
+    echo "FlareSolverr $latest_tag installed at $target_home/flaresolverr/"
 }
 
 function _service() {
@@ -203,7 +206,7 @@ EnvironmentFile=%h/flaresolverr/env.conf
 Type=exec
 Restart=on-failure
 WorkingDirectory=%h/flaresolverr
-ExecStart=%h/flaresolverr/flaresolverr
+ExecStart=%h/flaresolverr/venv/bin/python %h/flaresolverr/src/flaresolverr.py
 [Install]
 WantedBy=default.target
 EOF
