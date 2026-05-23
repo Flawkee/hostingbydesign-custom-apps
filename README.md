@@ -14,6 +14,7 @@ Each script handles download, build/config, and a systemd service. Run with `sud
 | [sonarr4k.sh](sonarr4k.sh) | Sonarr 4K | `/sonarr4k` | Second Sonarr instance for 4K content. Requires Sonarr already installed. |
 | [radarr4k.sh](radarr4k.sh) | Radarr 4K | `/radarr4k` | Second Radarr instance for 4K content. Requires Radarr already installed. |
 | [bazarr4k.sh](bazarr4k.sh) | Bazarr 4K | `/bazarr4k` | Second Bazarr instance for 4K content. Requires Bazarr already installed. |
+| [flaresolverr.sh](flaresolverr.sh) | FlareSolverr | N/A | Downloads pre-built binary. No nginx or dashboard support — runs as a simple API service on localhost. |
 | [netdata.sh](netdata.sh) | Netdata | `/netdata` | System-wide monitoring. Installs via official kickstart.sh. **Always requires sudo.** |
 
 ## Usage
@@ -32,13 +33,14 @@ sudo bash -c "$(curl -sL -H 'Cache-Control: no-cache' 'https://github.com/Flawke
 
 > The `-H 'Cache-Control: no-cache'` header bypasses GitHub's CDN cache and ensures you always get the latest version of the script.
 
-Each installer prompts for one of:
+Each installer prompts for a menu action:
 
 | Option | Description |
 | --- | --- |
 | `show` | Print current status: service state, port, URL, nginx and swizzin panel setup |
 | `install` | Configure and start the app |
-| `upgrade` | Download the latest binary and restart (Unpackerr only). For 4K variants (Sonarr 4K, Radarr 4K, Bazarr 4K, Unpackerr 4K) regenerates the service file and restarts — the binary is managed by the base install. |
+| `upgrade` | Available on Sonarr 4K, Radarr 4K, Bazarr 4K, and Netdata. Regenerates systemd service (4K variants) or upgrades the binary (Netdata). |
+| `secure` | Available on Netdata only. Claims the agent to Netdata Cloud and enables Bearer Token Protection. |
 | `uninstall` | Stop service, remove files, and (if sudo) remove nginx config and dashboard entry |
 | `exit` | Quit without doing anything |
 
@@ -48,13 +50,14 @@ When run with `sudo`, `install` will pause after the app is up and ask whether t
 
 | App | Approach |
 | --- | --- |
-| Sonarr 4K, Radarr 4K, Bazarr 4K, Unpackerr, Unpackerr 4K | App natively serves under its `UrlBase` / `urlbase` / `base_url` — nginx proxies straight through with `proxy_redirect off`. No path rewriting needed. |
-| Netdata | No native subpath support. nginx uses a regex capture group (`~ /netdata/(?<ndpath>.*)`) to strip the prefix and proxy to `http://127.0.0.1:19999/$ndpath` — Netdata's own documented reverse-proxy pattern. |
+| Sonarr 4K, Radarr 4K, Bazarr 4K | App natively serves under its `UrlBase` — nginx proxies straight through with `proxy_redirect off`. No path rewriting needed. |
+| Netdata | No native subpath support. nginx uses a regex capture group (`~ /netdata/(?<ndpath>.*)`) to strip the prefix and proxy to `http://127.0.0.1:19999/$ndpath` — Netdata's documented reverse-proxy pattern. |
 | Seerr | No native base URL support. nginx issues a `return 301` redirect from `/seerr` to the app's direct `http://host:port`. |
+| FlareSolverr | No nginx integration. Listens on `localhost:8191` (or a custom port) for internal API use. Intended as a backend service, not exposed through nginx. |
 
 ## Service management
 
-**User-level apps** (Seerr, Sonarr 4K, Radarr 4K, Bazarr 4K, Unpackerr, Unpackerr 4K):
+**User-level apps** (Seerr, Sonarr 4K, Radarr 4K, Bazarr 4K, FlareSolverr):
 ```bash
 systemctl --user status <app>
 systemctl --user restart <app>
@@ -68,6 +71,16 @@ systemctl restart netdata
 journalctl -u netdata -f
 ```
 
-Logs: `~/.logs/<app>.log` (user apps) · `/var/log/netdata/` (Netdata)  
-Config: `~/.config/<App>/` (e.g. `~/.config/Sonarr4k/`, `~/.config/bazarr4k/`) · `/etc/netdata/` (Netdata)  
-Binaries: shared from the base install (`/opt/Sonarr/`, `/opt/Radarr/`, `/opt/bazarr/`) for 4K variants; `~/.local/bin/unpackerr` for Unpackerr; installed system-wide by kickstart for Netdata
+**Logs:**
+- User apps: `~/.logs/<app>.log` (e.g. `~/.logs/seerr.log`, `~/.logs/flaresolverr.log`)
+- Netdata: `/var/log/netdata/`
+
+**Config:**
+- User apps: `~/.config/<App>/` (e.g. `~/.config/Sonarr4k/`, `~/.config/bazarr4k/`, `~/flaresolverr/env.conf`)
+- Netdata: `/etc/netdata/`
+
+**Binaries:**
+- 4K variants (Sonarr 4K, Radarr 4K, Bazarr 4K): shared from base installs (`/opt/Sonarr/`, `/opt/Radarr/`, `/opt/bazarr/`)
+- Seerr: built in place at `~/seerr/`
+- FlareSolverr: pre-built at `~/flaresolverr/`
+- Netdata: system-wide via official kickstart
