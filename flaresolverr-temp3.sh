@@ -96,45 +96,29 @@ function _deps() {
     echo "Checking dependencies..."
 
     # FlareSolverr needs Chromium (or Google Chrome) on the host.
+    # Package name differs between distros: chromium-browser (Ubuntu) or chromium (Debian).
     if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null || command -v google-chrome &>/dev/null; then
         echo "Chromium/Chrome found."
     else
-        echo "Chromium not found — installing chromium..."
-        apt-get install -y chromium >> "$log" 2>&1 || {
-            echo "Failed to install chromium. Install it manually and re-run."
+        echo "Chromium not found — installing..."
+        apt-get install -y chromium-browser >> "$log" 2>&1 \
+            || apt-get install -y chromium >> "$log" 2>&1 || {
+            echo "Failed to install Chromium. Install it manually and re-run."
             exit 1
         }
         echo "Chromium installed."
     fi
 
-    # FlareSolverr source requires Python 3.13. Check for it; install from
-    # deadsnakes PPA if missing (works on Ubuntu 20.04, 22.04, etc.)
-    if ! command -v python3.13 &>/dev/null; then
-        echo "Python 3.13 not found — installing from deadsnakes PPA..."
-        apt-get install -y software-properties-common >> "$log" 2>&1
-        add-apt-repository -y ppa:deadsnakes/ppa >> "$log" 2>&1
-        apt-get update >> "$log" 2>&1
-        apt-get install -y python3.13 python3.13-venv python3.13-distutils >> "$log" 2>&1 || {
-            echo "Failed to install Python 3.13. Check $log"
-            exit 1
-        }
-        echo "Python 3.13 installed."
-    else
-        echo "Python 3.13 found."
-    fi
-
-    # Ensure curl, jq, and git are available.
+    # Ensure curl, jq, git, and python3-venv are available.
     local missing=()
     command -v curl &>/dev/null || missing+=(curl)
     command -v jq   &>/dev/null || missing+=(jq)
     command -v git  &>/dev/null || missing+=(git)
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "Installing: ${missing[*]}"
-        apt-get install -y "${missing[@]}" >> "$log" 2>&1 || {
-            echo "Failed to install dependencies: ${missing[*]}"
-            exit 1
-        }
-    fi
+    missing+=(python3-venv)
+    apt-get install -y "${missing[@]}" >> "$log" 2>&1 || {
+        echo "Failed to install dependencies: ${missing[*]}"
+        exit 1
+    }
     echo "All dependencies satisfied."
 }
 
@@ -156,17 +140,37 @@ function _flaresolverr_install() {
         exit 1
     }
 
-    echo "Creating Python 3.13 virtual environment..."
-    run_as_user "python3.13 -m venv '$target_home/flaresolverr/venv'" >> "$log" 2>&1 || {
+    # Find the best available Python 3 (3.13 > 3.12 > 3.11 > system python3).
+    # Debian 12 ships with 3.11; Ubuntu 24.04 with 3.12; newer Ubuntu with 3.13.
+    local python_bin=""
+    for py in python3.13 python3.12 python3.11 python3; do
+        if command -v "$py" &>/dev/null; then
+            local ver
+            ver=$("$py" -c "import sys; v=sys.version_info; print(v[0]*100+v[1])" 2>/dev/null)
+            if [[ -n "$ver" ]] && [[ "$ver" -ge 311 ]]; then
+                python_bin="$py"
+                break
+            fi
+        fi
+    done
+
+    if [[ -z "$python_bin" ]]; then
+        echo "No Python 3.11+ found. Install Python 3.11 or later and re-run."
+        exit 1
+    fi
+    echo "Using $python_bin ($($python_bin --version 2>&1))"
+
+    echo "Creating virtual environment..."
+    run_as_user "$python_bin -m venv '$target_home/flaresolverr/venv'" >> "$log" 2>&1 || {
         echo "Failed to create venv. See $log"
         exit 1
     }
 
     echo "Installing Python dependencies (this might take a while)..."
-    run_as_user "'$target_home/flaresolverr/venv/bin/pip' install \
-        --upgrade pip -q >> '$log' 2>&1 && \
-        '$target_home/flaresolverr/venv/bin/pip' install \
-        -r '$target_home/flaresolverr/requirements.txt' -q" >> "$log" 2>&1 || {
+    run_as_user "
+        '$target_home/flaresolverr/venv/bin/pip' install --upgrade pip &&
+        '$target_home/flaresolverr/venv/bin/pip' install -r '$target_home/flaresolverr/requirements.txt'
+    " >> "$log" 2>&1 || {
         echo "Failed to install Python dependencies. See $log"
         exit 1
     }
