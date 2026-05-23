@@ -109,11 +109,13 @@ function _deps() {
         echo "Chromium installed."
     fi
 
-    # Ensure curl, jq, git, and python3-venv are available.
+    # Ensure curl, jq, git, python3-venv, and xvfb are available.
+    # xvfb provides a virtual display — required by FlareSolverr to run Chromium headlessly.
     local missing=()
-    command -v curl &>/dev/null || missing+=(curl)
-    command -v jq   &>/dev/null || missing+=(jq)
-    command -v git  &>/dev/null || missing+=(git)
+    command -v curl   &>/dev/null || missing+=(curl)
+    command -v jq     &>/dev/null || missing+=(jq)
+    command -v git    &>/dev/null || missing+=(git)
+    command -v Xvfb   &>/dev/null || missing+=(xvfb)
     missing+=(python3-venv)
     apt-get install -y "${missing[@]}" >> "$log" 2>&1 || {
         echo "Failed to install dependencies: ${missing[*]}"
