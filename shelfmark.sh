@@ -172,7 +172,7 @@ function _port() {
 
 function _service() {
     _check_linger
-    run_as_user "mkdir -p '$target_home/.config/systemd/user' '$target_home/.install' '$target_home/.config/shelfmark' '$target_home/books'"
+    run_as_user "mkdir -p '$target_home/.config/systemd/user' '$target_home/.install' '$target_home/.config/shelfmark' '$target_home/books' '$target_home/.logs/shelfmark'"
 
     uv_path="$(run_as_user 'export PATH="$HOME/.local/bin:$PATH"; which uv' | tail -n1)"
 
@@ -180,10 +180,11 @@ function _service() {
 
     tmp_env="$(mktemp)"
     cat > "$tmp_env" << EOF
-FLASK_HOST=127.0.0.1
+FLASK_HOST=0.0.0.0
 FLASK_PORT=$SHELFMARK_PORT
 CONFIG_DIR=$target_home/.config/shelfmark
 INGEST_DIR=$target_home/books
+LOG_ROOT=$target_home/.logs
 EOF
     install -m 0644 -o "$target_user" -g "$target_user" "$tmp_env" "$target_home/shelfmark/env.conf"
     rm -f "$tmp_env"
