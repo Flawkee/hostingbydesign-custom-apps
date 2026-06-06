@@ -116,8 +116,8 @@ function _service() {
 {
   "TokenKey": "$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 64)",
   "Port": $KAVITA_PORT,
-  "IpAddresses": "",
-  "BaseUrl": "/",
+  "IpAddresses": "127.0.0.1",
+  "BaseUrl": "/kavita/",
   "Cache": 75
 }
 EOF
@@ -146,9 +146,9 @@ EOF
     run_as_user "touch '$target_home/.install/.kavita.lock'"
 
     if $SUDO_MODE; then
-        echo "kavita listening on 0.0.0.0:$KAVITA_PORT (nginx will expose it at /kavita)"
+        echo "kavita listening on 127.0.0.1:$KAVITA_PORT (nginx will expose it at /kavita/)"
     else
-        echo "kavita is up and running on http://$(hostname -f):$KAVITA_PORT"
+        echo "kavita is up and running on http://$(hostname -f):$KAVITA_PORT/kavita/"
     fi
 }
 
@@ -165,15 +165,21 @@ function _nginx() {
     auth_basic_user_file    ${htpasswd_file};"
     fi
 
-    local hostname
-    hostname="$(hostname -f)"
-    read -r -p "  Hostname for kavita redirect [$hostname]: " hostname_input
-    [[ -n "$hostname_input" ]] && hostname="$hostname_input"
-
     mkdir -p /etc/nginx/apps
     cat > /etc/nginx/apps/kavita.conf << EOF
-location /kavita {
-    return 301 http://${hostname}:${KAVITA_PORT}/;
+location /kavita/ {
+    proxy_pass http://127.0.0.1:${KAVITA_PORT}/kavita/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 300s;
+}
+location = /kavita {
+    return 301 /kavita/;
 }
 EOF
 
@@ -281,10 +287,10 @@ function _show() {
     nginx_conf="/etc/nginx/apps/kavita.conf"
     if [[ -f "$nginx_conf" ]]; then
         nginx_status="configured  ($nginx_conf)"
-        url="http://$(hostname -f):${port:-?}  (nginx /kavita redirects here)"
+        url="https://$(hostname -f)/kavita/"
     else
         nginx_status="not configured"
-        url="http://$(hostname -f):${port:-?}"
+        url="http://$(hostname -f):${port:-?}/kavita/"
     fi
 
     panel_lock="/install/.kavita.lock"
@@ -341,8 +347,8 @@ while true; do
                 echo "  The following will be configured:"
                 echo ""
                 echo "  1. /etc/nginx/apps/kavita.conf"
-                echo "     - Redirects https://<host>/kavita → http://$(hostname -f):$KAVITA_PORT/"
-                echo "     - Simple redirect: no path rewriting, kavita runs directly on its port."
+                echo "     - Reverse proxies https://<host>/kavita/ → http://127.0.0.1:$KAVITA_PORT/kavita/"
+                echo "     - WebSocket (SignalR) headers included."
                 echo ""
                 echo "  2. /opt/swizzin/core/custom/profiles.py"
                 echo "     - Appends kavita_meta so kavita appears in the swizzin panel sidebar."

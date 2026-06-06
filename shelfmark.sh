@@ -3,6 +3,45 @@
 # based on the seerr install script
 # shelfmark — calibrain/shelfmark (Python/Flask + React/Vite)
 
+# --- Argument parsing --------------------------------------------------------
+GITHUB_REPO="calibrain/shelfmark"
+
+_usage() {
+    cat << 'EOF'
+Usage: shelfmark.sh [OPTIONS]
+
+Options:
+  --repo REPO    GitHub repo to install from (default: calibrain/shelfmark)
+                 Accepts 'owner/repo' or full GitHub URL
+  --help         Show this help message
+
+Examples:
+  sudo bash shelfmark.sh
+  sudo bash shelfmark.sh --repo myfork/shelfmark
+  sudo bash shelfmark.sh --repo https://github.com/myfork/shelfmark
+EOF
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --repo)
+            [[ -z "${2:-}" ]] && { echo "Error: --repo requires a value."; exit 1; }
+            # Normalize: strip https://github.com/ prefix and .git suffix
+            GITHUB_REPO="${2#https://github.com/}"
+            GITHUB_REPO="${GITHUB_REPO%.git}"
+            shift 2
+            ;;
+        --help|-h)
+            _usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            _usage
+            ;;
+    esac
+done
+
 # --- Privilege detection -----------------------------------------------------
 if [[ $EUID -eq 0 ]]; then
     if [[ -z "${SUDO_USER:-}" ]] || [[ "$SUDO_USER" == "root" ]]; then
@@ -115,12 +154,12 @@ function _deps() {
 }
 
 function _shelfmark_install() {
-    echo "Downloading and extracting source code..."
-    dlurl="$(curl -sS https://api.github.com/repos/calibrain/shelfmark/releases/latest 2>/dev/null | jq -r .tarball_url)"
+    echo "Downloading and extracting source code (repo: $GITHUB_REPO)..."
+    dlurl="$(curl -sS "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | jq -r .tarball_url)"
 
     if [[ -z "$dlurl" ]] || [[ "$dlurl" == "null" ]]; then
         echo "No releases found, using main branch..."
-        dlurl="https://github.com/calibrain/shelfmark/archive/refs/heads/main.tar.gz"
+        dlurl="https://github.com/$GITHUB_REPO/archive/refs/heads/main.tar.gz"
     fi
 
     run_as_user "wget '$dlurl' -q -O '$target_home/shelfmark.tar.gz'" >> "$log" 2>&1 || {
@@ -367,6 +406,7 @@ function _show() {
     echo "=============================="
     echo "  Service name  : shelfmark"
     echo "  Service status: $svc_status"
+    echo "  Repo          : $GITHUB_REPO"
     echo "  Port          : ${port:-unknown}"
     echo "  URL           : $url"
     echo "  nginx         : $nginx_status"
