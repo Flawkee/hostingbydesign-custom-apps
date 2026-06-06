@@ -335,6 +335,77 @@ EOF
     echo "swizzin dashboard updated."
 }
 
+function _upgrade() {
+    lock="$target_home/.install/.shelfmark.lock"
+    if [[ ! -f "$lock" ]]; then
+        echo "shelfmark is not installed. Run 'install' first."
+        return 1
+    fi
+
+    echo "Stopping shelfmark service..."
+    systemctl_user stop shelfmark 2>/dev/null || true
+
+    # Preserve env.conf — it holds port, dirs, and log config
+    env_conf="$target_home/shelfmark/env.conf"
+    tmp_env="$(mktemp)"
+    if [[ -f "$env_conf" ]]; then
+        cp "$env_conf" "$tmp_env"
+        echo "env.conf saved."
+    else
+        echo "Warning: env.conf not found — service config will be lost."
+    fi
+
+    echo "Removing old source..."
+    run_as_user "rm -rf '$target_home/shelfmark'"
+
+    echo "Downloading new source (repo: $GITHUB_REPO)..."
+    dlurl="$(curl -sS "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | jq -r .tarball_url)"
+    if [[ -z "$dlurl" ]] || [[ "$dlurl" == "null" ]]; then
+        echo "No releases found, using main branch..."
+        dlurl="https://github.com/$GITHUB_REPO/archive/refs/heads/main.tar.gz"
+    fi
+    run_as_user "wget '$dlurl' -q -O '$target_home/shelfmark.tar.gz'" >> "$log" 2>&1 || {
+        echo "Download failed"
+        return 1
+    }
+    run_as_user "mkdir -p '$target_home/shelfmark' && tar --strip-components=1 -C '$target_home/shelfmark' -xzvf '$target_home/shelfmark.tar.gz' && rm '$target_home/shelfmark.tar.gz'" >> "$log" 2>&1
+    echo "Code extracted."
+
+    # Restore env.conf
+    if [[ -s "$tmp_env" ]]; then
+        install -m 0644 -o "$target_user" -g "$target_user" "$tmp_env" "$target_home/shelfmark/env.conf"
+        echo "env.conf restored."
+    fi
+    rm -f "$tmp_env"
+
+    echo "Installing frontend dependencies..."
+    run_as_user "
+        export NVM_DIR=\"\$HOME/.nvm\"
+        [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
+        make -C '$target_home/shelfmark' install
+    " >> "$log" 2>&1 || { echo "Frontend dep install failed"; return 1; }
+
+    echo "Building frontend and syncing to backend (this might take a while)..."
+    run_as_user "
+        export NVM_DIR=\"\$HOME/.nvm\"
+        [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
+        make -C '$target_home/shelfmark' build-serve
+    " >> "$log" 2>&1 || { echo "Frontend build failed"; return 1; }
+    echo "Frontend built and synced."
+
+    echo "Reinstalling Python dependencies via uv..."
+    run_as_user "
+        export PATH=\"\$HOME/.local/bin:\$PATH\"
+        cd '$target_home/shelfmark'
+        uv sync --locked --extra browser
+    " >> "$log" 2>&1 || { echo "Python dep install failed"; return 1; }
+    echo "Python dependencies installed."
+
+    systemctl_user daemon-reload
+    systemctl_user start shelfmark
+    echo "shelfmark upgraded and restarted."
+}
+
 function _remove() {
     systemctl_user disable --now shelfmark 2>/dev/null || true
     sleep 2
@@ -436,6 +507,7 @@ echo "What do you like to do?"
 echo ""
 echo "show      = Show current installation status and configuration"
 echo "install   = Install shelfmark"
+echo "upgrade   = Upgrade shelfmark (preserves config, port, and data)"
 echo "uninstall = Completely removes shelfmark"
 echo "exit      = Exits Installer"
 while true; do
@@ -476,6 +548,10 @@ while true; do
                 fi
                 echo ""
             fi
+            break
+            ;;
+        "upgrade")
+            _upgrade
             break
             ;;
         "uninstall")
