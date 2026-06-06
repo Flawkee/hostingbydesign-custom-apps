@@ -4,7 +4,12 @@
 # shelfmark — calibrain/shelfmark (Python/Flask + React/Vite)
 
 # --- Argument parsing --------------------------------------------------------
-GITHUB_REPO="calibrain/shelfmark"
+# SHELFMARK_REPO env var sets the default; --repo flag overrides it.
+_normalize_repo() {
+    local r="${1#https://github.com/}"
+    echo "${r%.git}"
+}
+GITHUB_REPO="$(_normalize_repo "${SHELFMARK_REPO:-calibrain/shelfmark}")"
 
 _usage() {
     cat << 'EOF'
@@ -15,10 +20,14 @@ Options:
                  Accepts 'owner/repo' or full GitHub URL
   --help         Show this help message
 
+Environment variables:
+  SHELFMARK_REPO  Same as --repo; CLI flag takes precedence if both are set
+
 Examples:
   sudo bash shelfmark.sh
   sudo bash shelfmark.sh --repo myfork/shelfmark
-  sudo bash shelfmark.sh --repo https://github.com/myfork/shelfmark
+  sudo SHELFMARK_REPO=myfork/shelfmark bash -c "$(curl -sL 'https://.../shelfmark.sh')"
+  sudo bash -c "$(curl -sL 'https://.../shelfmark.sh')" _ --repo myfork/shelfmark
 EOF
     exit 0
 }
@@ -27,9 +36,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo)
             [[ -z "${2:-}" ]] && { echo "Error: --repo requires a value."; exit 1; }
-            # Normalize: strip https://github.com/ prefix and .git suffix
-            GITHUB_REPO="${2#https://github.com/}"
-            GITHUB_REPO="${GITHUB_REPO%.git}"
+            GITHUB_REPO="$(_normalize_repo "$2")"
             shift 2
             ;;
         --help|-h)
