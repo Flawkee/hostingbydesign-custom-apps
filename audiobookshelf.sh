@@ -112,7 +112,7 @@ function _audiobookshelf_install() {
         export NVM_DIR=\"\$HOME/.nvm\"
         [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
         cd '$target_home/audiobookshelf'
-        npm ci
+        npm install
     " >> "$log" 2>&1 || {
         echo "npm ci failed"
         exit 1
@@ -298,7 +298,7 @@ function _upgrade() {
         export NVM_DIR=\"\$HOME/.nvm\"
         [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"
         cd '$target_home/audiobookshelf'
-        npm ci
+        npm install
     " >> "$log" 2>&1 || { echo "npm ci failed"; return 1; }
 
     echo "Building client (this might take a while)..."
