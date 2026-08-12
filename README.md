@@ -16,6 +16,7 @@ Each script handles download, build/config, and a systemd service. Run with `sud
 | [bazarr4k.sh](bazarr4k.sh) | Bazarr 4K | `/bazarr4k` | Second Bazarr instance for 4K content. Requires Bazarr already installed. |
 | [flaresolverr.sh](flaresolverr.sh) | FlareSolverr | N/A | Downloads pre-built binary. No nginx or dashboard support — runs as a simple API service on localhost. |
 | [netdata.sh](netdata.sh) | Netdata | `/netdata` | System-wide monitoring. Installs via official kickstart.sh. **Always requires sudo.** |
+| [translarr.sh](translarr.sh) | Translarr | `/translarr` | Rootless Bazarr AI subtitle translator with persistent SQLite state, health-checked upgrades, and rollback. |
 
 ## Usage
 
@@ -39,7 +40,7 @@ Each installer prompts for a menu action:
 | --- | --- |
 | `show` | Print current status: service state, port, URL, nginx and swizzin panel setup |
 | `install` | Configure and start the app |
-| `upgrade` | Available on Sonarr 4K, Radarr 4K, Bazarr 4K, and Netdata. Regenerates systemd service (4K variants) or upgrades the binary (Netdata). |
+| `upgrade` | Available on Sonarr 4K, Radarr 4K, Bazarr 4K, Netdata, and Translarr. Translarr preserves state and rolls back automatically if its health check fails. |
 | `secure` | Available on Netdata only. Claims the agent to Netdata Cloud and enables Bearer Token Protection. |
 | `uninstall` | Stop service, remove files, and (if sudo) remove nginx config and dashboard entry |
 | `exit` | Quit without doing anything |
