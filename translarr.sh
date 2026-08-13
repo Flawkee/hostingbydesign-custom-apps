@@ -133,6 +133,7 @@ CONFIG_DIR="$target_home/.config/translarr"
 ENV_FILE="$CONFIG_DIR/env"
 UNIT_DIR="$target_home/.config/systemd/user"
 UNIT_FILE="$UNIT_DIR/translarr.service"
+LEGACY_WORKER_UNIT_FILE="$UNIT_DIR/translarr-worker.service"
 SHARE_DIR="$target_home/.local/share/translarr"
 APP_DIR="$SHARE_DIR/app"
 DATA_DIR="$SHARE_DIR/data"
@@ -408,7 +409,12 @@ clone_repository() {
 }
 
 write_unit() {
-    local tmp
+    local tmp service_command
+    if as_user "$APP_DIR/.venv/bin/python" -m translarr run --help >/dev/null 2>&1; then
+        service_command="$APP_DIR/.venv/bin/python -m translarr run --workers 2"
+    else
+        service_command="$APP_DIR/.venv/bin/python -m translarr serve"
+    fi
     tmp="$(mktemp)"
     cat >"$tmp" <<EOF
 [Unit]
@@ -420,7 +426,7 @@ After=network-online.target
 Type=exec
 EnvironmentFile=$ENV_FILE
 WorkingDirectory=$APP_DIR
-ExecStart=$APP_DIR/.venv/bin/python -m translarr serve
+ExecStart=$service_command
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -433,14 +439,30 @@ WantedBy=default.target
 EOF
     install_for_user 0644 "$tmp" "$UNIT_FILE"
     rm -f "$tmp"
+    systemctl_user disable translarr-worker 2>/dev/null || true
+    as_user rm -f "$LEGACY_WORKER_UNIT_FILE"
     systemctl_user daemon-reload
 }
 
+stop_service() {
+    systemctl_user stop translarr-worker 2>/dev/null || true
+    systemctl_user stop translarr 2>/dev/null || true
+}
+
+start_service() {
+    systemctl_user enable --now translarr
+}
+
 health_wait() {
-    local port
+    local port health_path
     port="$(env_value TRANSLARR_PORT)"
+    if as_user "$APP_DIR/.venv/bin/python" -m translarr run --help >/dev/null 2>&1; then
+        health_path="/health/ready"
+    else
+        health_path="/health"
+    fi
     for _ in {1..30}; do
-        if curl -fsS --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+        if curl -fsS --max-time 3 "http://127.0.0.1:${port}${health_path}" >/dev/null 2>&1; then
             return 0
         fi
         sleep 2
@@ -569,13 +591,13 @@ install_app() {
     fi
     local stage
     stage="$(stage_release)" || { echo "Release staging failed." >&2; return 1; }
-    systemctl_user stop translarr 2>/dev/null || true
+    stop_service
     [[ ! -e "$APP_DIR" ]] || as_user mv "$APP_DIR" "$BACKUP_DIR/incomplete-$(date +%Y%m%d-%H%M%S)"
     as_user mv "$stage" "$APP_DIR"
     write_unit
-    systemctl_user enable --now translarr
+    start_service
     if ! health_wait; then
-        systemctl_user stop translarr 2>/dev/null || true
+        stop_service
         echo "Translarr did not become healthy. Inspect: journalctl --user -u translarr -n 100" >&2
         return 1
     fi
@@ -598,12 +620,12 @@ upgrade_app() {
     stage="$(stage_release)" || { echo "Release staging failed; current service was untouched." >&2; return 1; }
     stamp="$(date +%Y%m%d-%H%M%S)"
     backup="$BACKUP_DIR/pre-upgrade-$stamp"
-    systemctl_user stop translarr
+    stop_service
     snapshot_state "$backup"
     as_user mv "$APP_DIR" "$backup/app"
     as_user mv "$stage" "$APP_DIR"
     write_unit
-    systemctl_user start translarr
+    start_service
     if health_wait; then
         echo "Upgrade succeeded. Rollback backup retained at $backup"
         configure_nginx
@@ -612,12 +634,12 @@ upgrade_app() {
     fi
 
     echo "Upgrade health check failed; restoring old code and state." >&2
-    systemctl_user stop translarr 2>/dev/null || true
+    stop_service
     as_user mv "$APP_DIR" "$backup/failed-app"
     as_user mv "$backup/app" "$APP_DIR"
     restore_state_with_quarantine "$backup/state.tar.gz" "$backup/failed-state"
     write_unit
-    systemctl_user start translarr
+    start_service
     if health_wait; then
         echo "Automatic rollback succeeded. Failed release retained at $backup/failed-app" >&2
     else
@@ -647,25 +669,25 @@ rollback_app() {
     stamp="$(date +%Y%m%d-%H%M%S)"
     current="$BACKUP_DIR/pre-rollback-$stamp"
     echo "Rolling back to $selected"
-    systemctl_user stop translarr
+    stop_service
     snapshot_state "$current"
     as_user mv "$APP_DIR" "$current/app"
     as_user mv "$selected/app" "$APP_DIR"
     restore_state_with_quarantine "$selected/state.tar.gz" "$current/displaced-state"
     write_unit
-    systemctl_user start translarr
+    start_service
     if health_wait; then
         echo "Rollback succeeded. The replaced version is retained at $current"
         return 0
     fi
 
     echo "Rollback target failed health check; restoring the version just replaced." >&2
-    systemctl_user stop translarr 2>/dev/null || true
+    stop_service
     as_user mv "$APP_DIR" "$selected/failed-rollback-app"
     as_user mv "$current/app" "$APP_DIR"
     restore_state_with_quarantine "$current/state.tar.gz" "$selected/failed-rollback-state"
     write_unit
-    systemctl_user start translarr
+    start_service
     health_wait || echo "Restored version is not healthy; inspect the user journal." >&2
     return 1
 }
@@ -706,8 +728,8 @@ show_status() {
 }
 
 uninstall_app() {
-    systemctl_user disable --now translarr 2>/dev/null || true
-    as_user rm -f "$UNIT_FILE" "$LOCK_FILE"
+    systemctl_user disable --now translarr-worker translarr 2>/dev/null || true
+    as_user rm -f "$UNIT_FILE" "$LEGACY_WORKER_UNIT_FILE" "$LOCK_FILE"
     systemctl_user daemon-reload 2>/dev/null || true
     [[ ! -d "$APP_DIR" ]] || as_user rm -rf "$APP_DIR"
     remove_proxy_dashboard
